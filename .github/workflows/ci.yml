@@ -94,7 +94,7 @@ jobs:
 
   ios-debug:
     name: Build unsigned iOS Debug IPA
-    runs-on: macos-14
+    runs-on: macos-latest
     needs: quality
     steps:
       - name: Check out repository

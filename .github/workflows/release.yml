@@ -93,7 +93,7 @@ jobs:
 
   ios-release:
     name: Build unsigned iOS Release IPA
-    runs-on: macos-14
+    runs-on: macos-latest
     needs: quality
     steps:
       - name: Check out repository
