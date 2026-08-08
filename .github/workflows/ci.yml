@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24.x
+  PNPM_VERSION: 11.18.0
+
+jobs:
+  quality:
+    name: Type-check and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+  android-debug:
+    name: Build Android Debug APK
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Android project
+        run: pnpm exec expo prebuild --platform android --no-install
+
+      - name: Build debug APK
+        run: |
+          chmod +x android/gradlew
+          android/gradlew --no-daemon --stacktrace assembleDebug
+          APK_PATH="$(find android/app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$APK_PATH"
+          cp "$APK_PATH" "$RUNNER_TEMP/Lily-debug.apk"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lily-android-debug-apk
+          path: ${{ runner.temp }}/Lily-debug.apk
+          if-no-files-found: error
+
+  ios-debug:
+    name: Build unsigned iOS Debug IPA
+    runs-on: macos-14
+    needs: quality
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate iOS project
+        run: pnpm exec expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods dependencies
+        run: pod install --project-directory=ios
+
+      - name: Build unsigned iOS Debug app
+        env:
+          DERIVED_DATA: ${{ runner.temp }}/lily-debug-derived-data
+        run: |
+          IOS_WORKSPACE="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          test -n "$IOS_WORKSPACE"
+          IOS_SCHEME="$(basename "$IOS_WORKSPACE" .xcworkspace)"
+
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+          APP_PATH="$(find "$DERIVED_DATA/Build/Products" -maxdepth 2 -type d -path '*-iphoneos/*.app' -print -quit)"
+          test -n "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/debug-ipa/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/debug-ipa/Payload/$(basename "$APP_PATH")"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/debug-ipa/Payload" "$RUNNER_TEMP/Lily-debug.ipa"
+
+      - name: Upload unsigned Debug IPA-shaped archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: lily-ios-debug-unsigned-ipa
+          path: ${{ runner.temp }}/Lily-debug.ipa
+          if-no-files-found: error
