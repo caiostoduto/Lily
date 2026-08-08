@@ -1,26 +1,45 @@
 name: Release builds
 
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example 1.1.0"
+        required: true
+        type: string
+      title:
+        description: "GitHub Release title"
+        required: true
+        type: string
+      body:
+        description: "GitHub Release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
 
 env:
   NODE_VERSION: 24.x
-  PNPM_VERSION: 11.18.0
+  PNPM_VERSION: 11.x
 
 jobs:
-  quality:
-    name: Type-check and lint
+  prepare:
+    name: Validate release inputs
     runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.base.outputs.sha }}
+      build_number: ${{ steps.metadata.outputs.build_number }}
     steps:
-      - name: Check out repository
+      - name: Check out main
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          ref: main
+
+      - name: Require main branch
+        run: test "$GITHUB_REF_NAME" = "main"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -32,6 +51,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+
+      - name: Capture release metadata
+        id: metadata
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          node scripts/set-release-version.mjs "$VERSION" "$BUILD_NUMBER" --check-only
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Capture source commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -45,12 +77,12 @@ jobs:
   android-release:
     name: Build Android Release APK
     runs-on: ubuntu-latest
-    needs: quality
+    needs: prepare
     steps:
-      - name: Check out repository
+      - name: Check out release source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -72,6 +104,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Apply release version
+        run: node scripts/set-release-version.mjs "${{ inputs.version }}" "${{ needs.prepare.outputs.build_number }}"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -86,20 +121,22 @@ jobs:
           test -n "$APK_PATH"
           cp "$APK_PATH" "$RUNNER_TEMP/Lily-release.apk"
 
-      - name: Upload APK to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "$RUNNER_TEMP/Lily-release.apk" --clobber
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lily-release-apk
+          path: ${{ runner.temp }}/Lily-release.apk
+          if-no-files-found: error
 
   ios-release:
     name: Build unsigned iOS Release IPA
     runs-on: macos-latest
-    needs: quality
+    needs: prepare
     steps:
-      - name: Check out repository
+      - name: Check out release source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -111,6 +148,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+
+      - name: Apply release version
+        run: node scripts/set-release-version.mjs "${{ inputs.version }}" "${{ needs.prepare.outputs.build_number }}"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -146,7 +186,74 @@ jobs:
           ditto "$APP_PATH" "$RUNNER_TEMP/release-ipa/Payload/$(basename "$APP_PATH")"
           ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/release-ipa/Payload" "$RUNNER_TEMP/Lily-release.ipa"
 
-      - name: Upload IPA to GitHub Release
+      - name: Upload release IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lily-release-ipa
+          path: ${{ runner.temp }}/Lily-release.ipa
+          if-no-files-found: error
+
+  publish:
+    name: Commit version and create GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - android-release
+      - ios-release
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Verify main did not change during the build
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+        run: test "$(git rev-parse HEAD)" = "$BASE_SHA"
+
+      - name: Download release APK
+        uses: actions/download-artifact@v5
+        with:
+          name: lily-release-apk
+          path: release-files
+
+      - name: Download release IPA
+        uses: actions/download-artifact@v5
+        with:
+          name: lily-release-ipa
+          path: release-files
+
+      - name: Commit version and tag release
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+        run: |
+          TAG="v${VERSION}"
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists. Choose a new version." >&2
+            exit 1
+          fi
+
+          node scripts/set-release-version.mjs "$VERSION" "$BUILD_NUMBER"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json app.json altsource.json
+          git commit -m "chore: release $TAG"
+          git push origin HEAD:main
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "$RUNNER_TEMP/Lily-release.ipa" --clobber
+          RELEASE_TITLE: ${{ inputs.title }}
+          RELEASE_BODY: ${{ inputs.body }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --verify-tag \
+            --title "$RELEASE_TITLE" \
+            --notes "$RELEASE_BODY" \
+            release-files/Lily-release.apk \
+            release-files/Lily-release.ipa

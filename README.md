@@ -103,6 +103,7 @@ pnpm lint
 - `data/markers.ts` — local marker storage.
 - `data/lilyPackage.ts` — `.lily` export and import format.
 - `altsource.json` — AltStore source metadata.
+- `scripts/set-release-version.mjs` — release version and build-number update.
 
 Markers are created from the app with the `+` button and copied into its local storage.
 
@@ -111,7 +112,7 @@ Markers are created from the app with the `+` button and copied into its local s
 GitHub Actions has two workflows:
 
 - `CI` runs on commits and pull requests. It type-checks, lints, and builds Debug APK and IPA artifacts.
-- `Release builds` runs when a GitHub Release is published. It builds Release APK and IPA artifacts and attaches them to the release.
+- `Release builds` is started manually from the GitHub Actions tab. Enter a version, release title, and release notes. It runs checks, builds Release APK and IPA artifacts, updates the app version and build number, commits the changes, and creates the GitHub Release.
 
 The IPA artifacts are unsigned and intended to be installed through AltStore, which signs them during installation. Direct iPhone installation requires Apple signing credentials and provisioning profiles.
 

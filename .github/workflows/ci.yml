@@ -13,7 +13,7 @@ concurrency:
 
 env:
   NODE_VERSION: 24.x
-  PNPM_VERSION: 11.18.0
+  PNPM_VERSION: 11.x
 
 jobs:
   quality:
