@@ -80,7 +80,7 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x android/gradlew
-          android/gradlew --no-daemon --stacktrace assembleDebug
+          (cd android && ./gradlew --no-daemon --stacktrace assembleDebug)
           APK_PATH="$(find android/app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$APK_PATH"
           cp "$APK_PATH" "$RUNNER_TEMP/Lily-debug.apk"
