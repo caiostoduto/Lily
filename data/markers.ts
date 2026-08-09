@@ -1,5 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Directory, File, Paths } from "expo-file-system";
+import { createLogger } from "../logger";
+
+const log = createLogger("markers");
 
 export interface MarkerRecord {
   id: string;
@@ -35,6 +38,7 @@ function toEntry(record: MarkerRecord): MarkerEntry {
 function publish(nextRecords: MarkerRecord[]) {
   records = nextRecords;
   entries = records.map(toEntry);
+  log.debug("Published marker state", { count: records.length });
   for (const listener of listeners) {
     listener();
   }
@@ -71,6 +75,7 @@ function parseMarkerRecord(value: unknown): MarkerRecord | null {
 }
 
 async function persist() {
+  log.debug("Persisting marker index", { count: records.length });
   if (!markerIndexFile.exists) {
     markerIndexFile.create({ intermediates: true });
   }
@@ -79,23 +84,33 @@ async function persist() {
 
 export async function loadMarkers() {
   if (hasLoaded) {
+    log.debug("Marker index already loaded", { count: records.length });
     return;
   }
 
   if (!loadingPromise) {
+    const startedAt = Date.now();
+    log.info("Loading marker index", { exists: markerIndexFile.exists });
     loadingPromise = (async () => {
       try {
         if (markerIndexFile.exists) {
           const parsed: unknown = JSON.parse(await markerIndexFile.text());
           if (Array.isArray(parsed)) {
-            publish(
-              parsed
-                .map(parseMarkerRecord)
-                .filter((record): record is MarkerRecord => record !== null)
-            );
+            const validRecords = parsed
+              .map(parseMarkerRecord)
+              .filter((record): record is MarkerRecord => record !== null);
+            publish(validRecords);
+            log.info("Loaded marker index", {
+              count: validRecords.length,
+              discardedCount: parsed.length - validRecords.length,
+              durationMs: Date.now() - startedAt,
+            });
           }
         }
-      } catch {
+      } catch (error) {
+        log.error("Failed to load marker index; using an empty list", error, {
+          durationMs: Date.now() - startedAt,
+        });
         publish([]);
       } finally {
         hasLoaded = true;
@@ -117,6 +132,12 @@ export async function addMarker(input: {
   videoUri: string;
   videoRatio: number;
 }) {
+  const startedAt = Date.now();
+  log.info("Adding marker", {
+    cropVideo: input.cropVideo,
+    imageRatio: input.imageRatio,
+    videoRatio: input.videoRatio,
+  });
   await loadMarkers();
   markerDirectory.create({ idempotent: true, intermediates: true });
 
@@ -140,6 +161,11 @@ export async function addMarker(input: {
     const nextRecords = [...records, record];
     await persistRecords(nextRecords);
     publish(nextRecords);
+    log.info("Marker added", {
+      count: nextRecords.length,
+      durationMs: Date.now() - startedAt,
+      markerId: id,
+    });
     return toEntry(record);
   } catch (error) {
     if (imageFile.exists) {
@@ -148,6 +174,10 @@ export async function addMarker(input: {
     if (videoFile.exists) {
       videoFile.delete();
     }
+    log.error("Failed to add marker; copied files were cleaned up", error, {
+      durationMs: Date.now() - startedAt,
+      markerId: id,
+    });
     throw error;
   }
 }
@@ -161,6 +191,8 @@ export async function addImportedMarkers(
     videoRatio: number;
   }>
 ) {
+  const startedAt = Date.now();
+  log.info("Adding imported markers", { count: inputs.length });
   await loadMarkers();
   markerDirectory.create({ idempotent: true, intermediates: true });
 
@@ -190,6 +222,11 @@ export async function addImportedMarkers(
     const nextRecords = [...records, ...importedRecords];
     await persistRecords(nextRecords);
     publish(nextRecords);
+    log.info("Imported markers added", {
+      count: importedRecords.length,
+      durationMs: Date.now() - startedAt,
+      totalCount: nextRecords.length,
+    });
     return importedRecords.map(toEntry);
   } catch (error) {
     for (const file of createdFiles) {
@@ -197,15 +234,21 @@ export async function addImportedMarkers(
         file.delete();
       }
     }
+    log.error("Failed to add imported markers; copied files were cleaned up", error, {
+      durationMs: Date.now() - startedAt,
+    });
     throw error;
   }
 }
 
 export async function deleteMarker(id: string) {
+  const startedAt = Date.now();
+  log.info("Deleting marker", { markerId: id });
   await loadMarkers();
 
   const record = records.find((marker) => marker.id === id);
   if (!record) {
+    log.warn("Delete requested for an unknown marker", { markerId: id });
     return;
   }
 
@@ -221,11 +264,20 @@ export async function deleteMarker(id: string) {
       if (file.exists) {
         file.delete();
       }
-    } catch {
+    } catch (error) {
       // The marker is already removed from the index; an orphaned file is safe
       // to ignore and can be cleaned up during a future storage pass.
+      log.warn("Could not remove a marker media file", {
+        error: error instanceof Error ? error.message : String(error),
+        markerId: id,
+      });
     }
   }
+  log.info("Marker deleted", {
+    count: records.length,
+    durationMs: Date.now() - startedAt,
+    markerId: id,
+  });
 }
 
 async function persistRecords(nextRecords: MarkerRecord[]) {

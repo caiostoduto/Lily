@@ -1,5 +1,8 @@
 import { useEffect } from "react";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { createLogger } from "../../logger";
+
+const log = createLogger("ar-navigator");
 
 interface Props {
   markersCount: number;
@@ -9,6 +12,7 @@ interface Props {
 
 export default function ARSceneView({ onReady, style }: Props) {
   useEffect(() => {
+    log.info("AR navigator is using the web fallback");
     onReady();
   }, [onReady]);
 

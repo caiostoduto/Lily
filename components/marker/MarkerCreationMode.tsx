@@ -16,6 +16,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { addMarker } from "../../data/markers";
+import { createLogger } from "../../logger";
+
+const log = createLogger("marker-creation");
 
 interface Props {
   onClose: () => void;
@@ -36,6 +39,7 @@ export default function MarkerCreationMode({ onClose }: Props) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const scanPhoto = useCallback(async () => {
+    log.info("Starting photo scan");
     setIsScanning(true);
     setErrorMessage(null);
     setSelectedVideo(null);
@@ -48,6 +52,10 @@ export default function MarkerCreationMode({ onClose }: Props) {
         responseType: ResponseType.ImageFilePath,
       });
       const imagePath = result.scannedImages?.[0];
+      log.info("Photo scan completed", {
+        hasImage: Boolean(imagePath),
+        status: result.status,
+      });
 
       if (result.status === ScanDocumentResponseStatus.Success && imagePath) {
         setScannedImage(imagePath);
@@ -56,12 +64,23 @@ export default function MarkerCreationMode({ onClose }: Props) {
           (width, height) => {
             if (width > 0 && height > 0) {
               setImageRatio(height / width);
+              log.debug("Scanned image dimensions resolved", {
+                height,
+                ratio: height / width,
+                width,
+              });
             }
           },
-          () => setImageRatio(1)
+          () => {
+            log.warn("Could not resolve scanned image dimensions; using ratio 1");
+            setImageRatio(1);
+          }
         );
+      } else if (result.status !== ScanDocumentResponseStatus.Success) {
+        log.info("Photo scan did not produce an image", { status: result.status });
       }
-    } catch {
+    } catch (error) {
+      log.error("Photo scan failed", error);
       setErrorMessage("Could not scan that photo.");
     } finally {
       setIsScanning(false);
@@ -69,6 +88,7 @@ export default function MarkerCreationMode({ onClose }: Props) {
   }, []);
 
   const pickVideo = useCallback(async () => {
+    log.info("Opening video picker");
     setErrorMessage(null);
 
     try {
@@ -80,18 +100,39 @@ export default function MarkerCreationMode({ onClose }: Props) {
       });
 
       if (!result.canceled && result.assets[0]) {
-        setSelectedVideo(result.assets[0]);
+        const video = result.assets[0];
+        setSelectedVideo(video);
+        log.info("Video selected", {
+          durationMs: video.duration,
+          height: video.height,
+          width: video.width,
+        });
+      } else {
+        log.info("Video picker canceled");
       }
-    } catch {
+    } catch (error) {
+      log.error("Video picker failed", error);
       setErrorMessage("Could not choose that video.");
     }
   }, []);
 
   const saveMarker = useCallback(async () => {
     if (!scannedImage || !selectedVideo) {
+      log.warn("Save marker ignored because required media is missing", {
+        hasScannedImage: Boolean(scannedImage),
+        hasSelectedVideo: Boolean(selectedVideo),
+      });
       return;
     }
 
+    log.info("Saving marker", {
+      cropVideo,
+      imageRatio,
+      videoRatio:
+        selectedVideo.width > 0
+          ? selectedVideo.height / selectedVideo.width
+          : 1,
+    });
     setIsSaving(true);
     setErrorMessage(null);
 
@@ -106,8 +147,10 @@ export default function MarkerCreationMode({ onClose }: Props) {
             : 1,
         videoUri: selectedVideo.uri,
       });
+      log.info("Marker save completed");
       onClose();
-    } catch {
+    } catch (error) {
+      log.error("Marker save failed", error);
       setErrorMessage("Could not save this marker.");
     } finally {
       setIsSaving(false);

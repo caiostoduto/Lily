@@ -17,6 +17,9 @@ import {
   importLilyPackage,
 } from "../../data/lilyPackage";
 import { deleteMarker, type MarkerEntry, useMarkers } from "../../data/markers";
+import { createLogger } from "../../logger";
+
+const log = createLogger("marker-manager");
 
 interface Props {
   onClose: () => void;
@@ -33,7 +36,13 @@ export default function MarkerManager({ onClose }: Props) {
 
   const selectedMarkers = markers.filter((marker) => selectedIds.has(marker.id));
 
+  const handleClose = useCallback(() => {
+    log.info("Closing marker manager", { markerCount: markers.length });
+    onClose();
+  }, [markers.length, onClose]);
+
   const confirmDelete = useCallback((marker: MarkerEntry) => {
+    log.info("Showing delete confirmation", { markerId: marker.id });
     Alert.alert(
       "Delete marker?",
       "This removes the saved photo and video from this device.",
@@ -43,9 +52,14 @@ export default function MarkerManager({ onClose }: Props) {
           text: "Delete",
           style: "destructive",
           onPress: () => {
+            log.info("Deleting marker after confirmation", { markerId: marker.id });
             setDeletingId(marker.id);
             void deleteMarker(marker.id)
-              .catch(() => {
+              .then(() => {
+                log.info("Marker deletion completed", { markerId: marker.id });
+              })
+              .catch((error) => {
+                log.error("Marker deletion failed", error, { markerId: marker.id });
                 Alert.alert("Could not delete marker", "Please try again.");
               })
               .finally(() => setDeletingId(null));
@@ -63,21 +77,31 @@ export default function MarkerManager({ onClose }: Props) {
       } else {
         next.add(id);
       }
+      log.debug("Updated marker selection", {
+        markerId: id,
+        selectedCount: next.size,
+      });
       return next;
     });
   }, []);
 
   const toggleSelecting = useCallback(() => {
-    setIsSelecting((current) => !current);
+    setIsSelecting((current) => {
+      const next = !current;
+      log.info("Toggled marker selection mode", { enabled: next });
+      return next;
+    });
     setSelectedIds(new Set());
     setStatusMessage(null);
   }, []);
 
   const handleShare = useCallback(async () => {
     if (selectedMarkers.length === 0) {
+      log.warn("Share ignored because no markers are selected");
       return;
     }
 
+    log.info("Starting marker share", { count: selectedMarkers.length });
     setActiveAction("share");
     setStatusMessage(null);
 
@@ -85,14 +109,20 @@ export default function MarkerManager({ onClose }: Props) {
       if (!(await Sharing.isAvailableAsync())) {
         throw new Error("Sharing is not available on this device.");
       }
+      log.debug("System sharing is available");
 
       const packageFile = await createLilyPackage(selectedMarkers);
+      log.info("Marker package created for sharing", {
+        count: selectedMarkers.length,
+      });
       await Sharing.shareAsync(packageFile.uri, {
         dialogTitle: "Share Lily markers",
         mimeType: "application/zip",
         UTI: "public.zip-archive",
       });
+      log.info("System share flow completed");
     } catch (error) {
+      log.error("Marker share failed", error, { count: selectedMarkers.length });
       setStatusMessage(
         error instanceof Error ? error.message : "Could not share these markers."
       );
@@ -102,6 +132,7 @@ export default function MarkerManager({ onClose }: Props) {
   }, [selectedMarkers]);
 
   const handleImport = useCallback(async () => {
+    log.info("Opening marker package picker");
     setActiveAction("import");
     setStatusMessage(null);
 
@@ -113,16 +144,23 @@ export default function MarkerManager({ onClose }: Props) {
       });
 
       if (result.canceled || !result.assets[0]) {
+        log.info("Marker package picker canceled");
         return;
       }
 
+      log.info("Marker package selected", {
+        mimeType: result.assets[0].mimeType,
+        size: result.assets[0].size,
+      });
       const { importedCount } = await importLilyPackage(result.assets[0].uri);
       setIsSelecting(false);
       setSelectedIds(new Set());
       setStatusMessage(
         `Imported ${importedCount} ${importedCount === 1 ? "marker" : "markers"}.`
       );
+      log.info("Marker package import completed", { importedCount });
     } catch (error) {
+      log.error("Marker package import failed", error);
       setStatusMessage(
         error instanceof Error ? error.message : "Could not import this file."
       );
@@ -143,7 +181,7 @@ export default function MarkerManager({ onClose }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close marker manager"
-          onPress={onClose}
+          onPress={handleClose}
           style={({ pressed }) => [styles.doneButton, pressed && styles.pressed]}
         >
           <Text style={styles.doneButtonText}>Done</Text>

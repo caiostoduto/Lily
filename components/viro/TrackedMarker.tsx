@@ -8,6 +8,7 @@ import {
 import type { ViroAnchor } from "@reactvision/react-viro";
 import { type MarkerEntry } from "../../data/markers";
 import SafeViroMaterialVideo from "./SafeViroMaterialVideo";
+import { createLogger } from "../../logger";
 
 /**
  * Physical width of every printed photo in meters.
@@ -63,12 +64,14 @@ interface Props {
  * - Sizes the video plane to match the registered print.
  */
 function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
+  const log = React.useMemo(() => createLogger(`tracked-marker:${marker.id}`), [marker.id]);
   const [isTracked, setIsTracked] = useState(false);
   const [targetReady, setTargetReady] = useState(false);
   const videoMaterialName = `marker-video-${marker.id}`;
 
   const isTrackedRef = useRef(false);
   const lostTrackingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTrackingMethodRef = useRef<string | undefined>(undefined);
 
   // Keep a stable ref for onMarkerUpdate to avoid triggering useEffect
   const onMarkerUpdateRef = useRef(onMarkerUpdate);
@@ -78,6 +81,11 @@ function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
 
   // Register the tracking target once on mount, clean up on unmount.
   useEffect(() => {
+    log.info("Registering image tracking target", {
+      cropVideo: marker.cropVideo,
+      imageRatio: marker.imageRatio,
+      videoRatio: marker.videoRatio,
+    });
     ViroARTrackingTargets.createTargets({
       [marker.id]: {
         source: marker.imageSource,
@@ -92,21 +100,24 @@ function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
     let isMounted = true;
     queueMicrotask(() => {
       if (isMounted) {
+        log.debug("Image tracking target is ready");
         setTargetReady(true);
       }
     });
 
     return () => {
       isMounted = false;
+      log.debug("Removing image tracking target");
       ViroARTrackingTargets.deleteTarget(marker.id);
       if (lostTrackingTimerRef.current) {
         clearTimeout(lostTrackingTimerRef.current);
       }
       onMarkerUpdateRef.current?.(marker.id, false);
     };
-  }, [marker.id, marker.imageSource]);
+  }, [log, marker.cropVideo, marker.id, marker.imageRatio, marker.imageSource, marker.videoRatio]);
 
   useEffect(() => {
+    log.debug("Creating video material");
     ViroMaterials.createMaterials({
       [videoMaterialName]: {
         diffuseTexture: { source: marker.videoSource },
@@ -117,12 +128,14 @@ function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
     });
 
     return () => {
+      log.debug("Deleting video material");
       ViroMaterials.deleteMaterials([videoMaterialName]);
     };
-  }, [marker.videoSource, videoMaterialName]);
+  }, [log, marker.videoSource, videoMaterialName]);
 
   const updateAnchorState = (anchorPosition?: [number, number, number]) => {
     if (!isTrackedRef.current) {
+      log.info("Image anchor found", { hasPosition: Boolean(anchorPosition) });
       isTrackedRef.current = true;
       setIsTracked(true);
       onMarkerUpdateRef.current?.(marker.id, true, anchorPosition);
@@ -151,10 +164,15 @@ function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
     // On iOS, trackingMethod is undefined — treat that as actively tracked.
     const method: string | undefined = anchor?.trackingMethod;
     if (method === "lastKnownPose" || method === "notTracking") {
+      if (lastTrackingMethodRef.current !== method) {
+        log.debug("Image anchor temporarily lost", { trackingMethod: method });
+        lastTrackingMethodRef.current = method;
+      }
       // Don't reset the grace timer — let it expire and hide the content.
       return;
     }
 
+    lastTrackingMethodRef.current = method;
     updateAnchorState(anchor?.position);
   };
 
@@ -162,6 +180,9 @@ function TrackedMarker({ marker, isMuted = false, onMarkerUpdate }: Props) {
     if (lostTrackingTimerRef.current) {
       clearTimeout(lostTrackingTimerRef.current);
       lostTrackingTimerRef.current = null;
+    }
+    if (isTrackedRef.current) {
+      log.info("Image anchor removed");
     }
     isTrackedRef.current = false;
     setIsTracked(false);

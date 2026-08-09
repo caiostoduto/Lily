@@ -1,5 +1,8 @@
 import { ViroMaterialVideo } from "@reactvision/react-viro";
 import { findNodeHandle, NativeModules, Platform } from "react-native";
+import { createLogger } from "../../logger";
+
+const log = createLogger("video-cleanup");
 
 interface AndroidUIManager {
   VRTMaterialVideo?: {
@@ -22,6 +25,7 @@ export default class SafeViroMaterialVideo extends ViroMaterialVideo {
   componentWillUnmount() {
     const nodeHandle = findNodeHandle(this);
     if (!nodeHandle) {
+      log.debug("Skipping video cleanup because the native node is unavailable");
       return;
     }
 
@@ -31,9 +35,13 @@ export default class SafeViroMaterialVideo extends ViroMaterialVideo {
 
       if (uiManager?.dispatchViewManagerCommand && pauseCommand !== undefined) {
         uiManager.dispatchViewManagerCommand(nodeHandle, pauseCommand, [0]);
+        log.debug("Paused Android video during cleanup");
+      } else {
+        log.warn("Android video cleanup command is unavailable");
       }
     } else if (Platform.OS === "ios") {
       NativeModules.VRTMaterialVideoManager?.pause?.(nodeHandle);
+      log.debug("Paused iOS video during cleanup");
     }
   }
 }

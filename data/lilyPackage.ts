@@ -1,6 +1,9 @@
 import { File, Paths } from "expo-file-system";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { addImportedMarkers, type MarkerEntry } from "./markers";
+import { createLogger } from "../logger";
+
+const log = createLogger("package");
 
 export const LILY_PACKAGE_MIME = "application/vnd.lily.marker-pack+zip";
 export const LILY_PACKAGE_EXTENSION = ".lily";
@@ -95,9 +98,12 @@ function parseManifest(value: unknown): LilyPackageManifest {
 
 export async function createLilyPackage(markers: MarkerEntry[]) {
   if (markers.length === 0) {
+    log.warn("Package creation requested with no markers");
     throw new Error("Select at least one marker.");
   }
 
+  const startedAt = Date.now();
+  log.info("Creating Lily package", { markerCount: markers.length });
   const files: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {};
   const manifestMarkers: LilyPackageManifestMarker[] = [];
   let totalMediaBytes = 0;
@@ -138,12 +144,20 @@ export async function createLilyPackage(markers: MarkerEntry[]) {
     `lily-markers-${Date.now()}${LILY_PACKAGE_EXTENSION}`
   );
   packageFile.write(packageBytes);
+  log.info("Lily package created", {
+    bytes: packageBytes.byteLength,
+    durationMs: Date.now() - startedAt,
+    markerCount: markers.length,
+  });
   return packageFile;
 }
 
 export async function importLilyPackage(uri: string): Promise<LilyPackageImportResult> {
+  const startedAt = Date.now();
+  log.info("Importing Lily package");
   const packageFile = new File(uri);
   const packageBytes = await packageFile.bytes();
+  log.debug("Read Lily package", { bytes: packageBytes.byteLength });
 
   if (packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new Error("This Lily package is too large.");
@@ -156,6 +170,7 @@ export async function importLilyPackage(uri: string): Promise<LilyPackageImportR
   }
 
   const manifest = parseManifest(JSON.parse(strFromU8(manifestBytes)));
+  log.info("Parsed Lily package manifest", { markerCount: manifest.markers.length });
   let totalMediaBytes = manifestBytes.byteLength;
   const imported = [];
 
@@ -181,5 +196,9 @@ export async function importLilyPackage(uri: string): Promise<LilyPackageImportR
   }
 
   const entries = await addImportedMarkers(imported);
+  log.info("Lily package imported", {
+    durationMs: Date.now() - startedAt,
+    importedCount: entries.length,
+  });
   return { importedCount: entries.length };
 }

@@ -1,7 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ViroARScene, type ViroCameraTransform } from "@reactvision/react-viro";
 import { useMarkers } from "../../data/markers";
 import TrackedMarker from "./TrackedMarker";
+import { createLogger } from "../../logger";
+
+const log = createLogger("ar-scene");
 
 interface Props {
   onReady?: () => void;
@@ -31,11 +34,17 @@ export default function OpeningScene({ onReady }: Props = {}) {
   const lastUpdateTimeRef = useRef<number>(0);
   const hasReportedReadyRef = useRef(false);
 
+  useEffect(() => {
+    log.info("AR scene loaded", { markerCount: markers.length });
+    return () => log.debug("AR scene unloaded");
+  }, [markers.length]);
+
   const handleTrackingUpdated = useCallback(() => {
     if (hasReportedReadyRef.current) {
       return;
     }
     hasReportedReadyRef.current = true;
+    log.info("AR tracking session reported ready");
     onReady?.();
   }, [onReady]);
 
@@ -60,6 +69,7 @@ export default function OpeningScene({ onReady }: Props = {}) {
 
     if (activeEntries.length === 0) {
       if (activeSoundMarkerIdRef.current !== null) {
+        log.info("No tracked markers; muting all marker audio");
         activeSoundMarkerIdRef.current = null;
         setActiveSoundMarkerId(null);
       }
@@ -69,6 +79,7 @@ export default function OpeningScene({ onReady }: Props = {}) {
     if (activeEntries.length === 1 || !camera) {
       const singleId = activeEntries[0].id;
       if (activeSoundMarkerIdRef.current !== singleId) {
+        log.info("Selected active marker audio", { markerId: singleId });
         activeSoundMarkerIdRef.current = singleId;
         setActiveSoundMarkerId(singleId);
       }
@@ -117,6 +128,7 @@ export default function OpeningScene({ onReady }: Props = {}) {
       }
 
       if (activeSoundMarkerIdRef.current !== nextActive) {
+        log.info("Switched active marker audio", { markerId: nextActive });
         activeSoundMarkerIdRef.current = nextActive;
         setActiveSoundMarkerId(nextActive);
       }
@@ -132,6 +144,11 @@ export default function OpeningScene({ onReady }: Props = {}) {
       
       // Only force an immediate recalculation if tracking status actually changed
       const trackingStatusChanged = wasTracked !== isTracked;
+      if (trackingStatusChanged) {
+        log.info(isTracked ? "Marker tracking started" : "Marker tracking stopped", {
+          markerId: id,
+        });
+      }
       updateActiveMarker(trackingStatusChanged);
     },
     [updateActiveMarker]

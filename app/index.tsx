@@ -13,6 +13,9 @@ import MarkerCreationMode from "../components/marker/MarkerCreationMode";
 import MarkerManager from "../components/marker/MarkerManager";
 import ARSceneView from "../components/viro/ARSceneView";
 import { useMarkers } from "../data/markers";
+import { createLogger } from "../logger";
+
+const log = createLogger("home");
 
 export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
@@ -22,28 +25,44 @@ export default function Home() {
   const { entries: markers, isLoaded: markersLoaded } = useMarkers();
   const [iconProgress] = useState(() => new Animated.Value(0));
 
+  useEffect(() => {
+    log.info("Home screen mounted");
+    return () => log.debug("Home screen unmounted");
+  }, []);
+
+  useEffect(() => {
+    if (markersLoaded) {
+      log.info("Markers are ready for display", { count: markers.length });
+    }
+  }, [markers.length, markersLoaded]);
+
   const handleOpenCreation = useCallback(() => {
+    log.info("Opening marker creation");
     setIsArReady(false);
     setIsManaging(false);
     setIsCreating(true);
   }, []);
 
   const handleCloseCreation = useCallback(() => {
+    log.info("Closing marker creation");
     setIsArReady(false);
     setIsCreating(false);
   }, []);
 
   const handleOpenManager = useCallback(() => {
+    log.info("Opening marker manager", { markerCount: markers.length });
     setIsArReady(false);
     setIsManaging(true);
-  }, []);
+  }, [markers.length]);
 
   const handleCloseManager = useCallback(() => {
+    log.info("Closing marker manager");
     setIsArReady(false);
     setIsManaging(false);
   }, []);
 
   const handleArReady = useCallback(() => {
+    log.info("AR scene reported ready");
     setIsArReady(true);
   }, []);
 
@@ -62,7 +81,11 @@ export default function Home() {
     }
 
     const fallback = setTimeout(() => setIsArReady(true), 3000);
-    return () => clearTimeout(fallback);
+    log.debug("Starting AR readiness fallback timer", { delayMs: 3000 });
+    return () => {
+      clearTimeout(fallback);
+      log.debug("Cleared AR readiness fallback timer");
+    };
   }, [isCreating, isManaging, markersLoaded]);
 
   const iconRotation = iconProgress.interpolate({
