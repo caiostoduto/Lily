@@ -11,7 +11,14 @@
       "localizedDescription": "Point Lily at a registered printed photo and play a video on top of it.",
       "iconURL": "https://raw.githubusercontent.com/caiostoduto/lily/main/assets/images/icon-rounded.png",
       "tintColor": "#651B3D",
-      "versions": []
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "1",
+          "date": "2026-08-09T03:53:05.208Z",
+          "downloadURL": "https://github.com/caiostoduto/lily/releases/latest/download/Lily-release.ipa"
+        }
+      ]
     }
   ]
 }
