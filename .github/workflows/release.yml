@@ -239,7 +239,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json app.json altsource.json
-          git commit -m "chore: release $TAG"
+          git commit -m "chore: release $TAG [skip build]"
           git push origin HEAD:main
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
